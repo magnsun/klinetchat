@@ -1,5 +1,22 @@
-use std::io::{self, Write, Read};
+use std::fs::OpenOptions;
+use std::io::{self, Write, Read, BufWriter};
 use std::net::TcpStream;
+use chrono::Local; // Husk at tilføje chrono i Cargo.toml
+
+fn log_message(message: &str) {
+    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let log_entry = format!("{} - {}\n", timestamp, message);
+
+    // Åbn eller opret logfilen i tilføjelsesmode
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("messages.log")
+        .expect("Could not open log file");
+
+    let mut writer = BufWriter::new(file);
+    writer.write_all(log_entry.as_bytes()).expect("Failed to write to log file");
+}
 
 fn main() {
     let mut stream = TcpStream::connect("127.0.0.1:8080").expect("Could not connect to server");
@@ -15,6 +32,9 @@ fn main() {
             println!("Disconnecting...");
             break;
         }
+
+        // Log beskeden før den sendes
+        log_message(&input.trim());
 
         stream.write_all(input.as_bytes()).expect("Failed to send message");
 
