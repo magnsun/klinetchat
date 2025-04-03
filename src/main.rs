@@ -55,11 +55,11 @@ fn main() {
         }
     });
 
-    let mut buffer: Vec<u8> = vec![0; 8]; // Buffer til data
+    //let mut buffer: Vec<u8> = vec![0; 8]; // Buffer til data
 
     loop {
         // Check for serial port data
-        match port.read(buffer.as_mut_slice()) {
+        /* match port.read(buffer.as_mut_slice()) {
             Ok(t) if t > 0 => {
                 let received_data = String::from_utf8_lossy(&buffer[..t]);
                 println!("Received from serial port: {}", received_data);
@@ -72,20 +72,34 @@ fn main() {
             Err(e) => {
                 eprintln!("Error reading from port: {:?}", e);
             }
+        } */
+        fn send_to_microbit(port: &mut Box<dyn SerialPort>, data: &str) {
+            let bytes = data.as_bytes();
+            match port.write_all(bytes) {
+                Ok(_) => {
+                    println!("Sent to micro:bit: {}", data);
+                }
+                Err(e) => {
+                    eprintln!("Failed to send data to micro:bit: {:?}", e);
+                }
+            }
         }
 
-        // Check for user input from the channel
-        if let Ok(input) = rx.try_recv() {
-            log_message(&input);
-            stream.write_all(input.as_bytes()).expect("Failed to send message");
+            // Check for user input from the channel
+            if let Ok(input) = rx.try_recv() {
+                log_message(&input);
+                stream.write_all(input.as_bytes()).expect("Failed to send message");
 
-            let mut response_buffer = [0; 512];
-            let bytes_read = stream.read(&mut response_buffer).expect("Failed to read response");
-            let response = String::from_utf8_lossy(&response_buffer[..bytes_read]);
+                // Send the input to micro:bit
+                send_to_microbit(&mut port, &input); // Sending user input to micro:bit
 
-            println!("Server response: {}", response);
+                let mut response_buffer = [0; 512];
+                let bytes_read = stream.read(&mut response_buffer).expect("Failed to read response");
+                let response = String::from_utf8_lossy(&response_buffer[..bytes_read]);
+
+                println!("Server response: {}", response);
+            }
+
+            thread::sleep(Duration::from_millis(8000));
         }
-
-        thread::sleep(Duration::from_millis(5000)); // Small delay to prevent busy waiting
     }
-}
