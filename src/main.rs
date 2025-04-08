@@ -40,11 +40,8 @@ fn main() {
     let baud_rate = 115200;
 
     let mut port = serialport::new(port_name, baud_rate)
-
         .timeout(Duration::from_millis(1000))
-
         .open()
-
         .expect("Kunne ikke åbne den serielle port");
 
     let mut stream =
