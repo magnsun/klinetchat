@@ -3,103 +3,122 @@ use serialport::SerialPort;
 use std::fs::OpenOptions;
 use std::io::{self, BufWriter, Read, Write};
 use std::net::TcpStream;
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-use std::sync::mpsc;
 
+// Logger en besked med timestamp til en logfil
 fn log_message(message: &str) {
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let log_entry = format!("{} - {}\n", timestamp, message);
-
     let file = OpenOptions::new()
         .create(true)
         .append(true)
         .open("messages.log")
-        .expect("Could not open log file");
-
+        .expect("Kunne ikke åbne logfilen");
     let mut writer = BufWriter::new(file);
-    writer.write_all(log_entry.as_bytes()).expect("Failed to write to log file");
+    writer
+        .write_all(log_entry.as_bytes())
+        .expect("Kunne ikke skrive til logfilen");
+
+}
+// Funktion til at sende data til micro:bit
+fn send_to_microbit(port: &mut Box<dyn SerialPort>, data: &str) {
+    let bytes = data.as_bytes();
+    match port.write_all(bytes) {
+        Ok(_) => {
+            println!("Sendt til micro:bit: {}", data);
+        }
+        Err(e) => {
+            eprintln!("Fejl ved sending til micro:bit: {:?}", e);
+        }
+    }
 }
 
 fn main() {
-    let port_name = "COM9"; // Ændr til det korrekte portnummer
+    let port_name = "COM9"; // Skift til den korrekte port hvis nødvendigt
     let baud_rate = 115200;
 
-    // Forsøg på at åbne den serielle port
     let mut port = serialport::new(port_name, baud_rate)
-        .timeout(Duration::from_secs(1))
+
+        .timeout(Duration::from_millis(1000))
+
         .open()
-        .expect("Failed to open port");
 
-    let mut stream = TcpStream::connect("127.0.0.1:8080").expect("Could not connect to server");
-    println!("Connected to server! Type messages or '/message' to test response.");
+        .expect("Kunne ikke åbne den serielle port");
 
+    let mut stream =
+
+        TcpStream::connect("127.0.0.1:8080").expect("Kunne ikke oprette forbindelse til server");
+
+    println!("Forbundet til server! Skriv beskeder eller 'exit' for at afslutte.");
     let (tx, rx) = mpsc::channel();
-    let stream_clone = stream.try_clone().expect("Failed to clone TCP stream");
-
-    // Thread for reading from stdin
+    let _stream_clone = stream.try_clone().expect("Kunne ikke klone TCP stream");
+    // Tråd til at læse fra stdin
     thread::spawn(move || {
         let stdin = io::stdin();
+
         loop {
             let mut input = String::new();
-            print!("Enter message: ");
+            print!("Skriv besked: ");
             io::stdout().flush().unwrap();
-            stdin.read_line(&mut input).expect("Failed to read line");
-
+            stdin.read_line(&mut input).expect("Kunne ikke læse input");
             if input.trim().to_lowercase() == "exit" {
                 break;
             }
-
-            // Send the input through the channel to the main thread
-            tx.send(input.trim().to_string()).expect("Failed to send input");
+            tx.send(input.trim().to_string())
+                .expect("Kunne ikke sende input til hovedtråden");
         }
     });
+    let mut buffer: Vec<u8> = vec![0; 512];
 
-    //let mut buffer: Vec<u8> = vec![0; 8]; // Buffer til data
 
     loop {
-        // Check for serial port data
-        /* match port.read(buffer.as_mut_slice()) {
+        // Læs fra micro:bit
+        match port.read(buffer.as_mut_slice()) {
             Ok(t) if t > 0 => {
                 let received_data = String::from_utf8_lossy(&buffer[..t]);
-                println!("Received from serial port: {}", received_data);
-
-                // Log and send the received data to the server
+                println!("Modtaget fra micro:bit: {}", received_data);
                 log_message(&received_data);
-                stream.write_all(received_data.as_bytes()).expect("Failed to send data to server");
+                stream
+                    .write_all(received_data.as_bytes())
+                    .expect("Kunne ikke sende til server");
             }
-            Ok(_) => {} // Ingen data læst
+
+            Ok(_) => {} // Ingen data
+            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {} // Normal timeout
             Err(e) => {
-                eprintln!("Error reading from port: {:?}", e);
+                eprintln!("Fejl ved læsning fra micro:bit: {:?}", e);
+
             }
-        } */
-        fn send_to_microbit(port: &mut Box<dyn SerialPort>, data: &str) {
-            let bytes = data.as_bytes();
-            match port.write_all(bytes) {
-                Ok(_) => {
-                    println!("Sent to micro:bit: {}", data);
+
+        }
+
+        // Håndter input fra brugeren
+
+        if let Ok(input) = rx.try_recv() {
+            log_message(&input);
+            stream
+                .write_all(input.as_bytes())
+                .expect("Kunne ikke sende besked til server");
+            send_to_microbit(&mut port, &input); // Send til micro:bit
+
+
+            // Læs svar fra server
+            let mut response_buffer = [0; 512];
+            match stream.read(&mut response_buffer) {
+                Ok(bytes_read) => {
+                    if bytes_read > 0 {
+                        let response =
+                            String::from_utf8_lossy(&response_buffer[..bytes_read]).to_string();
+                        println!("Svar fra server: {}", response);
+                    }
                 }
                 Err(e) => {
-                    eprintln!("Failed to send data to micro:bit: {:?}", e);
+                    eprintln!("Fejl ved læsning fra server: {:?}", e);
                 }
             }
         }
-
-            // Check for user input from the channel
-            if let Ok(input) = rx.try_recv() {
-                log_message(&input);
-                stream.write_all(input.as_bytes()).expect("Failed to send message");
-
-                // Send the input to micro:bit
-                send_to_microbit(&mut port, &input); // Sending user input to micro:bit
-
-                let mut response_buffer = [0; 512];
-                let bytes_read = stream.read(&mut response_buffer).expect("Failed to read response");
-                let response = String::from_utf8_lossy(&response_buffer[..bytes_read]);
-
-                println!("Server response: {}", response);
-            }
-
-            thread::sleep(Duration::from_millis(8000));
-        }
+        thread::sleep(Duration::from_millis(1000)); // Undgå at bruge for mange CPU-ressourcer
     }
+}
